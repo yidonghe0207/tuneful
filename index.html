@@ -137,6 +137,9 @@ p{margin:0}
 .controls .spacer{flex:1}
 .kbd{font-family:var(--f-mono);font-size:12px;padding:1px 6px;border-radius:6px;background:var(--surface-2);color:var(--ink)}
 .hint{font-size:13px;color:var(--muted)}
+.choose{position:absolute;inset:0;display:grid;place-items:center;padding:16px;background:color-mix(in srgb,var(--bg) 55%,transparent);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);z-index:2}
+.choose-card{background:var(--surface);color:var(--ink);border-radius:18px;padding:22px;display:grid;gap:10px;justify-items:center;text-align:center;max-width:340px;box-shadow:var(--shadow),inset 0 0 0 1px var(--line)}
+.choose-card h3{font-size:18px}.choose-card .btn{width:100%;justify-content:center}
 .toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);width:min(92vw,480px);background:var(--ink);color:var(--bg);padding:12px 16px;border-radius:14px;font-weight:600;z-index:30;box-shadow:var(--shadow)}
 
 /* ---------- Echo Garden ---------- */
@@ -438,17 +441,31 @@ function readVoice(){
   Input.hist.push(f);if(Input.hist.length>5)Input.hist.shift();
   const v=Input.hist.filter(x=>x>0).sort((a,b)=>a-b);
   Input.m=v.length>=3?f2m(v[v.length>>1]):null}
+const MIC_OFF_MSG='The microphone isn’t available on this device. Drag on the stage or use the ↑ ↓ keys instead.';
 async function useVoice(){
-  ac();
+  ac();hideChooser();
   try{if(!navigator.mediaDevices?.getUserMedia)throw 0;
+    try{if(navigator.audioSession)navigator.audioSession.type='play-and-record'}catch(e){}
     Input.mic=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}})}
-  catch(e){toast('The microphone isn’t available. Check that you allowed it for this site, or drag on the stage / use the ↑ ↓ keys instead.');setMode('whistle');return}
+  catch(e){Game.voicePref=false;toast(e&&e.name==='NotAllowedError'?'Microphone permission was blocked. To sing, allow the microphone for this site in your browser settings, then tap Microphone again. Meanwhile, drag on the stage.':MIC_OFF_MSG);setMode('whistle');return}
   const s=actx.createMediaStreamSource(Input.mic);Input.an=actx.createAnalyser();Input.an.fftSize=2048;s.connect(Input.an);
-  Input.buf=new Float32Array(2048);Input.mode='voice';Input.m=null;Input.km=null;Whistle.off();paintMode();Game.cur?.onMode?.()}
-function stopVoice(){if(Input.mic)Input.mic.getTracks().forEach(t=>t.stop());Input.mic=null;Input.an=null}
+  Input.buf=new Float32Array(2048);Input.mode='voice';Game.voicePref=true;Input.m=null;Input.km=null;Whistle.off();paintMode();Game.cur?.onMode?.()}
+function stopVoice(){if(Input.mic){Input.mic.getTracks().forEach(t=>t.stop());try{if(navigator.audioSession)navigator.audioSession.type='playback'}catch(e){}}Input.mic=null;Input.an=null}
 function setMode(m){if(m==='voice'){useVoice();return}stopVoice();Input.mode='whistle';Input.m=null;Input.km=null;paintMode();Game.cur?.onMode?.()}
 function paintMode(){document.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.mode===Input.mode))}
-function modeSeg(){return `<div class="seg" role="group" aria-label="How you make sound"><button data-mode="whistle" aria-pressed="true">Drag / keys</button><button data-mode="voice" aria-pressed="false">My voice</button></div>`}
+function modeSeg(){return `<div class="seg" role="group" aria-label="How you make sound"><button data-mode="whistle" aria-pressed="true">Drag / keys</button><button data-mode="voice" aria-pressed="false">Microphone</button></div>`}
+/* first thing in a singing game: ask how to play, so the microphone is easy to find */
+function chooseInput(st){
+  if(Input.mode==='voice')return;
+  if(Game.voicePref){useVoice();return}
+  if(Game.dragChosen)return;
+  const d=document.createElement('div');d.className='choose';d.id='chooser';
+  d.innerHTML=`<div class="choose-card"><h3>How do you want to play?</h3>
+    <button class="btn primary" id="cMic"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>Sing into my microphone</button>
+    <button class="btn" id="cDrag">Drag instead</button>
+    <p class="hint">Your browser will ask for permission first. Nothing is recorded or saved.</p></div>`;
+  st.appendChild(d);$('cMic').onclick=()=>useVoice();$('cDrag').onclick=()=>{Game.dragChosen=true;hideChooser()};$('cMic').focus({preventScroll:true})}
+function hideChooser(){$('chooser')?.remove()}
 function wireModeSeg(root){root.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>setMode(b.dataset.mode));paintMode()}
 /* finger on a canvas → pitch by height; arrow keys slide, Space stops */
 function bindPitch(cv,yToM,label){
@@ -606,7 +623,7 @@ const Sky={title:'Sky Singer',skill:'Singing in tune',color:'--la',
     ctl.querySelectorAll('[data-song]').forEach(b=>b.onclick=()=>{if(this.state==='play'||this.state==='count')return;this.song=b.dataset.song;Store.set('skySong',this.song);this.paintSongs();this.state='idle';this.showBest()});
     $('sHear').onclick=()=>{hush();let t=0;SONGS[this.song].n.forEach(([d,b])=>{tone(base()+d,t,b*this.beat*.9,.28);t+=b*this.beat})};
     $('sGo').onclick=()=>this.state==='play'||this.state==='count'?this.end(true):this.go();
-    wireModeSeg(ctl);this.paintSongs();this.showBest();
+    wireModeSeg(ctl);this.paintSongs();this.showBest();chooseInput(st);
     coach('Warm up first: drag up and down (or press ↑ ↓) and watch the dot follow your note.');
   },
   paintSongs(){document.querySelectorAll('[data-song]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.song===this.song))},
@@ -692,7 +709,7 @@ const Mo={title:'Mo the Blob',skill:'Pitch matching',color:'--sol',
     $('mHum').onclick=()=>{if(this.phase!=='happy')this.hum()};
     $('mNext').onclick=()=>this.newNote();
     $('mCents').onclick=e=>{this.showCents=!this.showCents;e.currentTarget.setAttribute('aria-pressed',this.showCents)};
-    wireModeSeg(ctl);this.showBest();this.later(()=>this.newNote(),400);
+    wireModeSeg(ctl);this.showBest();chooseInput(st);this.later(()=>this.newNote(),400);
   },
   showBest(){const b=Store.get('moFast',null);setBest(b!=null?`Fastest match: <b>${b.toFixed(1)} s</b>`:'')},
   later(f,ms){this.timers.push(setTimeout(f,ms))},
